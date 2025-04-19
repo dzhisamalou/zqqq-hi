@@ -26,16 +26,10 @@ pip install -r requirements.txt
 您需要下载预训练的BiSeNet人脸解析模型：
 
 ```bash
-# 克隆BiSeNet代码库
-git clone https://github.com/zllrunning/face-parsing.PyTorch.git
 
 # 下载预训练模型
-cd face-parsing.PyTorch
 wget -O model/79999_iter.pth https://drive.google.com/file/d/154JgKpzCPW82qINcVieuPH3fZ2e0P812/view?usp=sharing
 ```
-
-或者访问以下链接手动下载模型：
-- [BiSeNet预训练模型](https://drive.google.com/file/d/154JgKpzCPW82qINcVieuPH3fZ2e0P812/view?usp=sharing)
 
 ## 使用方法
 

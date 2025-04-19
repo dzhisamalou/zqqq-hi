@@ -1,0 +1,1047 @@
+HiFiVFS: High Fidelity Video Face Swapping
+ XuChen1* Keke He1* Junwei Zhu1† Yanhao Ge2 Wei Li2 Chengjie Wang1
+ 1 Tencent 2 VIVO
+ https://cxcx1996.github.io/HiFiVFS/
+ arXiv:2411.18293v2  [cs.CV]  10 Dec 2024
+ Figure 1. Face swapping results of HiFiVFS. The face in the source image (orange) is taken to replace the face in the target video (blue).
+ Abstract
+ Face swapping aims to generate results that combine the
+ identity from the source with attributes from the target.
+ Existing methods primarily focus on image-based face
+ swapping. When processing videos, each frame is han
+dled independently, making it difficult to ensure tempo
+ral stability. From a model perspective, face swapping
+ is gradually shifting from generative adversarial networks
+ (GANs) to diffusion models (DMs), as DMs have been
+ shown to possess stronger generative capabilities. Current
+ diffusion-based approaches often employ inpainting tech
+niques, which struggle to preserve fine-grained attributes
+ like lighting and makeup. To address these challenges,
+ we propose a high fidelity video face swapping (HiFiVFS)
+ framework, which leverages the strong generative capabil
+ity and temporal prior of Stable Video Diffusion (SVD). We
+ build a fine-grained attribute module to extract identity
+disentangled and fine-grained attribute features through
+ identity desensitization and adversarial learning. Addition
+ally, We introduce detailed identity injection to further en
+hance identity similarity. Extensive experiments demon
+strate that our method achieves state-of-the-art (SOTA) in
+ video face swapping, both qualitatively and quantitatively.
+ *Equal Contribution.
+ †Corresponding Author.
+ 1. Introduction
+ Face swapping involves generating an image or video that
+ combines the identity of a source face with the attributes
+ (such as pose, expression, lighting, and background) from a
+ target image or video, as illustrated in Fig. 1. This technique
+ has attracted significant interest due to its potential appli
+cations in the film industry [1], video games, and privacy
+ protection [28]. Existing studies on face swapping have pri
+marily concentrated on still images. To process a video,
+ each frame is handled as an individual image before be
+ing compiled into the final video. This approach overlooks
+ the continuity across multiple frames, potentially leading
+ to temporal jitter in the output. Moreover, current meth
+ods have not sufficiently tackled the challenges of manag
+ing fine-grained attributes, identity control, and maintaining
+ high-quality generation simultaneously.
+ Existing face swapping methods can be simply cate
+gorized into two main types: GAN-based [5, 12, 17
+19, 21, 30, 31, 36, 39–42] and diffusion-based [14, 20, 47]
+ approaches. As shown in Fig. 2(a) GAN-based methods
+ perform face swapping by extracting the global identity fea
+ture fgid from the source image Is and injecting them into
+ generative models. GAN-based methods do not require
+ paired ground truth during training and enable the direct
+ application of constraints on attributes and identity, thereby
+ offering enhanced control over these elements. However,
+ previous GAN-based face swapping techniques have lim
+1
+Attribute Loss
+ 𝑰𝒕
+ 𝑬𝒂𝒕𝒕𝒓
+ Coarse-grained
+ 𝑬𝒂𝒕𝒕𝒓
+ Spatial Attn Temporal Attn
+ Fine-grained
+ 𝑬𝒂𝒕𝒕𝒓
+ 𝑰𝒔
+ 𝑬𝒊𝒅
+ 𝑰𝒓
+ Identity Loss
+ 𝑰𝒔
+ Face
+ Parsing
+ 𝑰𝒔𝑴
+ ×T
+ ... ...
+ 𝑽𝒕
+ Face
+ Parsing
+ 𝑽𝒕𝑴
+ 𝑓𝑔𝑖𝑑
+ GAN Loss
+ 𝑬𝒊𝒅
+ ...
+ ×T
+ ...
+ 𝑓𝑔𝑖𝑑
+（a)GAN-based Methods
+（b)Diffusion-based Methods（c)Ours
+ 𝑰𝒔
+ 𝑬𝒊𝒅
+ 𝑓𝑑𝑖𝑑
+ Detailed 
+Identity
+ Tokenizer
+ Figure 2. Training pipeline of face swapping methods. (a) GAN-based methods achieve feature disentanglement by using attribute and
+ identity loss along with adversarial learning. (b) Diffusion-based methods construct an inpainting data flow that leverages pre-trained
+ identity and attribute features to fill in facial areas. (c) Our HiFiVFS is designed for video face swapping by incorporating temporal
+ attention on multiple frames and introducing temporal identity injection. We also introduce a fine-grained attribute extractor and a detailed
+ identity tokenizer to improve control over attributes and identities.
+ ited generative capabilities, resulting in unsatisfactory out
+puts in challenging scenarios, such as extreme poses or sig
+nificant facial structure differences.
+ Diffusion-based methods take advantage of the strong
+ generative abilities of diffusion models, producing high
+quality outputs. However, diffusion-based methods depend
+ on ground truth to generate noised inputs during training.
+ Furthermore, acquiring cross-identity ground truth (images
+ of various individuals sharing the same attributes) is often
+ deemed impractical in face swapping tasks. As a result,
+ current diffusion-based methods primarily employ inpaint
+ing techniques for learning. As shown in Fig. 2(b), during
+ training, both attribute and identity features are extracted
+ from source image Is and injected into the diffusion model
+ to reconstruct the complete facial image. During inference,
+ attribute feature fattr is extracted from the target image It,
+ while identity feature fgid is drawn from the source image
+ Is. To prevent the leakage of identity information into at
+tribute features during training, 3D landmarks [10, 47] or
+ CLIP features [14, 25] are commonly used in attribute in
+jection. However, these methods are not suitable for fine
+grained attribute control, such as lighting and makeup.
+ In this work, we proposed a video face swapping frame
+work via diffusion models in Fig. 2(c), called HiFiVFS.
+ We adopt the Stable Video Diffusion(SVD) [3] to address
+ the video face swapping task by incorporating temporal at
+tention on multiple target frames and introducing temporal
+ identity injection. As a diffusion-based method, the pri
+mary challenge lies in obtaining detailed attributes. Un
+like previous approaches that directly utilize pre-trained at
+tribute models, HiFiVFS introduces Fine-grained Attributes
+ Learning (FAL), incorporating identity desensitization and
+ adversarial learning into the attribute feature extraction pro
+cess. This enables our system to acquire detailed attribute
+ features that are independent of identity. Additionally, to
+ reduce the gap between face recognition and face swap
+ping, we designed to introduce Detailed Identity Learning
+ (DIL), which employs detailed identity features that are
+ better suited for the face swapping task and contain richer
+ information, thereby improving the similarity of the face
+ swapping results. We conducted extensive experiments on
+ FaceForensics++ [29] and VFHQ-FS, which include a va
+riety of challenging scenarios such as extreme poses, facial
+ expressions, lighting conditions, makeup, and occlusion, in
+ order to evaluate the effectiveness of our model. Results on
+ various cases show that our method can generate high fi
+delity and stable results that can better preserve the identity
+ of the source face and detail attribute information of target
+ videos. Our contributions can be summarized as follows:
+ 1. Weintroduce ahighfidelity video face swapping method
+ called HiFiVFS, which can consistently generate high fi
+delity face swapping videos even in extremely challeng
+ing scenarios. To the best of our knowledge, this is the
+ f
+ irst attempt to improve temporal stability within the face
+ swapping framework.
+ 2. We proposed Fine-grained Attributes Learning (FAL)
+ and Detailed Identity Learning (DIL) on top of our main
+ model, greatly enhancing the detailed attribute and iden
+tity control capability.
+ 3. Extensive experiments demonstrate that HiFiVFS out
+performs other SOTA face swapping methods on wild
+ face videos across various scenarios.
+ 2. Related Work
+ 2.1. GAN-based methods
+ The achievements of generative adversarial networks
+ (GANs) [13, 15] in computer vision have encouraged a lot
+ of research into the face swapping task. Most of these meth
+ods [5, 12, 19, 22, 23, 27, 30, 36, 43, 48] adopt a target
+oriented pipeline, where an encoder is trained to extract at
+tribute features from the target image. While during the de
+2
+coding process, identity features extracted from the source
+ image by a pre-trained face recognition model are grad
+ually integrated. SimSwap [5] introduces a weak feature
+ matching loss in the discriminator’s feature space, balanc
+ing the preservation of the source identity and the target at
+tributes. FaceShifter [19] presents a two-stage framework,
+ where the second stage is designed to correct occlusion
+ artifacts generated by the initial face swap stage. InfoS
+wap [12] employs the Information Bottleneck principle and
+ utilizes information-theoretical loss functions to effectively
+ disentangle identities. HifiFace [36] incorporates a 3D Mor
+phable Model (3DMM) [2, 33] and integrates a pre-trained
+ 3D face reconstruction model [10] into its identity extrac
+tion process, which aids in refining the source face shape.
+ BlendFace [30] addresses the attribute biases present in
+ face recognition models and offers well-disentangled iden
+tity features specifically designed for face swapping.
+ However, due to the limited capacity of most GAN mod
+els, their performance is not always satisfactory, particularly
+ in challenging scenarios that involve extreme poses and sig
+nificant variations in facial shape. Additionally, their ap
+proach relies on single-frame images for inference, which
+ lacks information from adjacent frames, leading to compro
+mised video stability. In contrast, our method is diffusion
+based, providing enhanced generative capabilities to ad
+dress a broader range of difficult scenarios. Moreover, it
+ operates within a multi-frame framework, resulting in im
+proved temporal stability.
+ 2.2. Diffusion-based methods
+ Diffusion-based methods [11, 24, 26, 35, 37, 44] utilize the
+ generative capabilities of the diffusion model to enhance
+ sample quality. To avoid the issue of ID leakage, current
+ diffusion-based methods [14, 20, 47] are all based on an in
+painting framework. The target image, with the facial area
+ masked out, is combined with noise and fed into the U-Net.
+ During the denoising process, the UNet gradually incorpo
+rates identity features and global attributes such as pose and
+ expression.
+ Diffswap [47] refers to HifiFace [36] by introducing
+ 3DMM [2, 33] to generate a 3D keypoint map, allowing
+ the swapped face to maintain the expression and pose of
+ the target. DiffSfSR [20] decomposes the face swapping
+ target into three components: background, identity, and ex
+pression. It ensures the consistency of the expression in the
+ swapped result by incorporating a fine-grained expression
+ representation network. However, both methods often ex
+hibit significant differences in detail attributes such as light
+ing and makeup compared to the template image due to the
+ lack of fine-grained attribute information from the template.
+ FaceAdapter [14] not only incorporates 3D keypoints but
+ also utilizes an additional fine-tuning CLIP to extract fea
+tures from the target, resulting in better attribute preserva
+tion. However, the CLIP model compresses the attribute
+ features significantly, making it unable to express details
+ such as makeupandtattoos on the face. Additionally, it may
+ lead to some leakage of identity features, causing deviations
+ in ID similarity. To address this, our HiFiVFS incorporates
+ disentangled learning into the attribute extraction process,
+ which not only provides complete template attribute fea
+tures but also prevents the leakage of template ID features.
+ Additionally, all existing diffusion-based face swapping
+ methods are image-based and fail to achieve temporal sta
+bility in video face swapping. In contrast, our approach is
+ specifically designed for video face swapping, featuring a
+ pipeline that supports multi-frame input and output, along
+ with a temporal module to ensure stability across frames.
+ 3. Preliminary: Stable Video Diffusion
+ Stable Video Diffusion (SVD) [3] is an advanced latent
+ video diffusion model that excels in high-resolution text-to
+video and image-to-video synthesis. To ensure video stabil
+ity, SVD employs 3Dconvolution layers, temporal attention
+ layers, and temporal decoder, as presented in [4].
+ As for training, SVD follow EDM [16] framework and
+ precondition the neural network with a dependent skip con
+nection, parameterizing the learnable denoiser Dθ as:
+ Dθ(x;σ) = cskip(σ)x + co(σ)Fθ(ci(σ)x; cnoise(σ)), (1)
+ where Fθ is the model to be trained, cskip(σ) modulates the
+ skip connection, ci(σ) and co(σ) scale the input and output
+ magnitudes, and cnoise(σ) maps noise level σ into a condi
+tioning input for Fθ. The denoiser Dθ can be trained via
+ denoising score matching (DSM)
+ LDM =E(x0,c)∼pdata(x0,c),(σ,n)∼p(σ,n)
+ λσ∥Dθ(x0 +n;σ,c)−x0∥2
+ 2 ,
+ (2)
+ and p(σ,n) = p(σ)N(n;0,σ2), p(σ) is a distribution over
+ noise levels σ, λσ : R+ → R+ is a weighting function, and
+ c is a conditioning signal, such as a text prompt.
+ 4. Methods
+ Togenerate high fidelity video face swapping results, we in
+troduce a novel diffusion-based video face swapping frame
+work, namedHiFiVFS.Wefirstintroducetheoverall frame
+work in Sec. 4.1, and then propose Fine-grained Attribute
+ Learning (Sec. 4.2) introduces adversarial learning to cap
+ture detailed attribute features while mitigating the effects
+ of identity leakage. Meanwhile, Detailed Identity Learning
+ (Sec. 4.3) analyzes the difference between face recognition
+ and face swapping tasks, and proposes a more effective way
+ to preserve identity features.
+ 3
+×T
+ ...
+ 𝐃𝐞𝐜 𝑬𝒂𝒕𝒕𝒓
+ Noise
+ UNet
+ 𝑬𝒂𝒕𝒕𝒓
+ 𝑽𝒕
+ 𝑰𝒔
+ Face
+ Parsing
+ 𝑓𝑑𝑖𝑑
+ 𝑓𝑎𝑡𝑡𝑟
+ 𝑓𝑎𝑡𝑡𝑟 ′
+ Fine-grained Attribute Learning (Sec. 4.2)
+ Detailed Identity Learning (Sec. 4.3)
+ 𝑽𝒕
+ 𝑰𝒔 𝑽𝒓
+ 𝑬𝒂𝒕𝒕𝒓
+ UNet
+ ×T
+ Face
+ Parsing
+ Noise
+ (a) Training pipeline of HiFiVFS 
+ 
+ 𝒕 ′
+ ...
+ 𝑽𝒓
+ or 𝑴𝒇
+ 𝐃𝐢𝐬
+ fake
+ real
+ 𝑽𝒕𝑴
+ 𝑽𝒕𝑴
+ Spatial 
+Attention
+ Temporal 
+Attention
+ (b) Inference pipeline of HiFiVFS 
+ 
+ 𝑟𝑖𝑑
+ 𝑡𝑑𝑖𝑑
+ ...
+ 𝑽𝒕 ′
+ 𝑽𝒕
+ 𝑳𝒂𝒕𝒕𝒓
+ 𝑓𝑔𝑖𝑑
+ 𝑳𝒂𝒅𝒗
+ 𝑳𝒊𝒅
+ 𝑓𝑑𝑖𝑑
+ 𝑳𝒕𝒊𝒅 𝑓𝑔𝑖𝑑
+ 𝑓𝑔𝑖𝑑
+ ′
+ DIT
+ 𝑬𝒊𝒅
+ 𝑬𝒊𝒅 𝑬𝒊𝒅
+ 𝑬𝒊𝒅
+ 𝑡𝑑𝑖𝑑
+ 𝑓𝑎𝑡𝑡𝑟
+ DIT
+ Figure3.PipelineofourproposedHiFiVFS,includingtrainingandinferencephases.HiFiVFSisprimarilytrainedbasedontheSVD[3]
+ framework, utilizingmulti-frameinputandatemporalattentiontoensurethestabilityof thegeneratedvideos. Inthetrainingphase,
+ HiFiVFSintroducesfine-grainedattribute learning(FAL)anddetailedidentitylearning(DIL). InFAL, attributedisentanglement and
+ enhancementareachievedthroughidentitydesensitizationandadversarial learning. DILusesmorefaceswappingsuitedIDfeaturesto
+ furtherboost identitysimilarity. Intheinferencephase,FALonlyretainsEatt forattributeextraction,makingthetestingprocessmore
+ convenient. ItisnotedthatHiFiVFSistrainedandtestedinthe latentspace [26],butforvisualizationpurposes,weillustrateallprocesses
+ intheoriginalimagespace.
+ 4.1.Overview
+ AsshowninFig.3, theinputconsistsofatargetvideoVt
+ andasourceimageIs.Duringtraining,Is israndomlyse
+lectedfromtheframesofVt,whileduringtesting, Iscan
+ beanyalignedfaceimage. Followingpreviousdiffusion
+basedfaceswappingmethods[14,20,47],weconstructthe
+ dataflowaroundtheinpaintingpipeline.Tofurtherimprove
+ uponpreviousmethods,weproposeFALtocapturedetailed
+ attributesandDILtoenhanceidentitysimilarity.
+ HiFiVFSisprimarilybuiltupontheSVD[3]framework,
+ whichemploys temporal attentionand3Dconvolutionto
+ ensurethestabilityofresults.However, therearetwomain
+ differencesinourHiFiVFS.First,whileSVDtakesastill
+ imageasinput,HiFiVFSusesmulti-framevideoinput.This
+ meansweextendtheSVDframeworkfromanimage-to
+videotasktoavideo-to-videotask,makingitmoresuitable
+ for faceswappingapplications. Second, theconditioning
+ signal inSVDisprimarilyatextprompt thatcontrols the
+ overallmovementoftheresults. Incontrast,HiFiVFSuses
+ anidentityfeatureastheconditioningsignaltocontroliden
+titysimilarity,whiletheoverallmovementisinfluencedby
+ theattributeinformationfromtheinputvideo.
+ ItisimportanttonotethatSVDusesEDM[16]andpre
+dicts theexpectedoutputdirectly,whichisdifferent from
+ othermethodsthattrainaseparatenetworkFθfromwhich
+ Dθ isderived.Asaresult,whencomputinglossessuchas
+ identitysimilarity,wecandirectlydecodetheoutputofDθ
+ toimageforourcalculations,makingitmoreadvantageous
+ forourfaceswappingtask.
+ 4.2.Fine-grainedAttributesLearning
+ Previousdiffusion-basedmethods for faceswapping[14,
+ 20, 47]haveprimarilydependedon inpaintingpipelines.
+ However,theseapproachesoftenstruggletopreservesubtle
+ details,duetotheirlimitedaccesstodetailedattributeinfor
+mation.Totacklethischallenge,weproposedfine-grained
+ attributelearning(FAL)toenhancethecontrolcapabilities
+ ofdiffusion-basedmethods.
+ FALincludesanencoderEattr toextractattributefea
+tures,adecoderDectofuseidentityfeatureswithattribute
+ features,adiscriminatorDistoenhanceoverallgeneration
+ quality,andaframemaskMf tocontrol theinteractionof
+ attributefeatureswithDenoising-UNet.Specifically, inthe
+ FALprocess,Eattrfirstextractstheattributefeaturesfattr
+ fromVt. Then,werandomlyselectafaceanduseapre
+trainedrecognitionmodeltoextractitsIDfeaturesfrid. In
+ thedecoder,we fusefattr andfrid toobtainamodified
+ 4
+template video with a different identity V ′
+ t . Finally, we use
+ Eattr again to extract the attribute features f′
+ attr from V ′
+ t .
+ Since the identity of V ′
+ t has changed, f′
+ attr can be consid
+ered as the disentangled attribute feature.
+ The FAL process requires the use of the following loss
+ functions to ensure effectiveness. First, it is necessary to
+ ensure that the attribute features of Vt and V ′
+ t are consistent,
+ which can be achieved using
+ Lattr = 1
+ 2 fattr −f′
+ attr
+ 2
+ 2 
+.
+ (3)
+ To make the training process more stable, pixel-level su
+pervision is also needed. Therefore, during the training
+ process, frid is set equal to the ID features fgid of Vt by
+ 50%, allowing for the calculation of pixel-level reconstruc
+tion loss in this case,
+ 
+ 
+ Lrec =
+ 
+ 1
+ 2 V′
+ t −Vt
+ 2
+ 2 
+iffrid = fid,
+ 0
+ otherwise.
+ (4)
+ To prevent the model from directly generating V ′
+ t that is
+ completely identical to Vt, we also use a triplet margin iden
+tity loss,
+ Ltid = max{cos(f′
+ gid,fgid)−cos(f′
+ gid,frid)+m,0}. (5)
+ Here fgid and f′
+ gid means identity feature from Vt and V ′
+ t ,
+ m means margin, which is set to 0.4 during our training,
+ cos is cosine distance. Noted that Ltid only compute when
+ frid= fgid. Compared with traditional identity loss, Ltid
+ focuses more on the change of identity rather than requiring
+ a high degree of similarity, which makes it more robust in
+ terms of attribute preservation.
+ Finally, to capture fine details and further improve real
+ism, we follow the adversarial objective in [7]. Thus, the
+ overall FAL loss is formulated as:
+ LFAL =Ladv +λattrLattr +λtidLtid +λrecLrec, (6)
+ with λattr = λrec = 10, λtid = 1.
+ When injection attribute feature from FAL in SVD, we
+ leverage the low-level features of Eattr and modify the in
+jection method from the conventional cross-attention ap
+proach to directly adding these features to the input of the
+ denoising-UNet. This adjustment aims to preserve all de
+tailed attribute features as much as possible. Additionally,
+ we implement a frame-wise mask Mf to enable quick con
+trol over the attribute feature injection. During the early
+ stages of training, Mf is fixed at zero, which effectively
+ separates the training of FAL, ensuring robust training in
+ the initial phase. After this warm-up stage, Mf is used to
+ randomly drop the attribute information.
+ It should be emphasized that the training process of FAL
+ is similar to GAN-based face swapping methods, but there
+ are several differences: 1) FAL places more emphasis on
+ maintaining attributes, while only using a weaker constraint
+ on identity to ensure it is not completely identical to the
+ original input. 2) The structure of FAL is based on the latent
+ space of VAE [26], while previous works are mainly on the
+ pixel space. So FAL is more compatible with the training
+ of Denoising-UNet.
+ 4.3. Detailed Identity Learning
+ Previous face swapping methods primarily relied on the
+ global 512-dimensional features fgid extracted from the last
+ fully connected (FC) layer of a pre-trained face recognition
+ model to represent identity. Face recognition focuses on
+ distinguishing between different individuals, while fgid ef
+fectively captures key identity information, it often lacks
+ f
+ iner details which is important for generation tasks.
+ Togetmoredetailed identity information, we use the fea
+tures from the last Res-Block layer, which has not yet been
+ significantly compressed, called fdid. Then we propose a
+ Detailed Identity Tokenizer (DIT) to transfer fdid to tokens.
+ Specifically, we use a convolutional layer to align the num
+ber of channels in fdid with the dimension of the cross at
+tention in UNet. Next, we flatten and transpose this feature
+ along the height and width dimensions, treating each spatial
+ pixel as a token, resulting in 49 tokens tdid. These tokens
+ are then fed into the cross attention and temporal attention
+ modules of UNet. This approach maximizes the retention
+ of all ID details. Additionally, to improve similarity further,
+ we also calculated the identity loss:
+ Lid = 1−cos(fgid,Eid(Vr)).
+ (7)
+ Noted that when calculating the ID loss, we still used the
+ global features fgid to reduce the impact of extra factors
+ like pose and expression.
+ 4.4. Overall Loss Function
+ Our Loss function has 4 components, including Denoising
+ Score Matching (eq. 3), Fine-grained Attributes Learning
+ Loss (eq. 6), and Identity Loss (eq. 7). The overall Loss can
+ be written as:
+ L =LDM+λFALLFAL +λidLid,
+ with λFAL = 1, λid = 0.1.
+ 5. Experiments
+ 5.1. Experimental Setup
+ (8)
+ Dataset. We use VoxCeleb2 [8], CelebV-Text [46], and
+ VFHQ [38] as our training datasets. We first evaluate
+ our method using the FaceForensics++(FF++) [29] dataset,
+ which comprises 1,000 videos. Additionally, since FF++ is
+ generally less challenging, primarily consisting of frontal,
+ 5
+unobstructedcaseswith lower resolution, we select 100
+ challengingvideosfromVFHQ[38]tocreateatestsetthat
+ ismorealignedwithreal-worldscenarios,namedVFHQ
+FS. These videoswere excluded fromthe training set.
+ VFHQ-FScontainscaseswithdiverseposes, expressions,
+ lighting,makeup, andocclusion. Weconductedexperi
+ments on this dataset to further demonstrate theperfor
+manceofvariousmethodsincomplexscenarios.
+ EvaluationMetrics.Thequantitativeevaluationsarecon
+ductedusing the followingmetrics: identityretrieval ac
+curacy (IDr.), identity similarity (IDs.), expressionerror
+ (Exp.), faceshapeerror(Shape.),gazeerror(Gaze.),pose
+ error (Pose.), videoidentitydistance(VIDD)andFr´ echet
+ VideoDistance(FVD).ForIDr. andIDs.,weemployadif
+ferentfacerecognitionmodelCosFace[34]facerecognition
+ modeltoperformidentityretrievalandcalculateidentityco
+sinesimilarity.ToassessExp.,Shape.,Gaze.,andPose.,we
+ employa3DMM-basedface reconstructionmethodfrom
+ Face-Adapter [14] toobtain the relative coefficients and
+ computetheEuclideandistancebetweentheresultsandthe
+ targets.ForVIDD,wefollowFOS[6]toevaluatethetem
+poralconsistencybetweenconsecutivevideoframes. For
+ FVD,wefollowStyleGAN-V[32],whichassessesoverall
+ videoquality,reflectingspatialandtemporalcoherence.
+ ImplementationDetails. During training, for eachface
+ video,werandomlyextractaclipwith16framesandalign
+ thefacesusinglandmarksextractedbyRetinaFace[9].The
+ framesarecroppedat640×640, containingmoreback
+groundcomparedtotraditionalcropstrategy,whichensures
+ thatthefaceiscompleteevenatextremeangles.Weemploy
+ apre-trainedfaceparsingmodel[45]topredictthefacearea
+ mask.AllmodelsaretrainedusingtheAdamWoptimizer,
+ alearningrateof1e-5,andabatchsizeof8. TheUNet is
+ initializedbythepre-trainedweightsfromSVDwhileother
+ trainablemodulesarerandomlyinitialized.Wefirstwarm
+upthetrainingfor5,000stepswithMffixedtozero,and
+ continuetrainingforanadditional50,000steps.Togenerate
+ resultsforevaluation,weuse25stepsof thedeterministic
+ EDMsamplerwithaclassifierguidancescaleof2,andthe
+ temporalco-denoisingisusedtoweakenthedetaildiscrep
+anciesbetweendifferentvideoclips.
+ 5.2.ComparisonswithExistingMethods
+ Inthissection,wecomparewithothermethodsquantita
+tivelyandqualitativelyonFF++andVFHQ-FStestset, in
+cludingGAN-basedFaceShifter [19], SimSwap[5],Hifi
+Face [36], InfoSwap[12],BlendFace [30] anddiffusion
+basedDiffSwap[47],Face-Adapter[14].
+ QuantitativeComparisons.Weconductedexperimentson
+ theFF++andVFHQ-FSdatasets, as shown inTables 1
+ and 2.FortheFF++,followingstandardpractice,wesam
+pled10imagesfromeachvideo.FortheVFHQ-FS,weuti
+lizedthefirst64framesofeachvideo.Theresultsindicate
+ Table1. Quantitative results inFF++. ForDiffSwap[47], the
+ resultsfromtheofficialcodediffersignificantlyfromthoseinthe
+ paper,sowehavemarkedthemingrayinthetable.
+ Methods IDr.↑ IDs.↑ Exp↓ Pose↓ Shape↓ Gaze↓
+ SimSwap[5] 96.78 62.42 5.94 0.0261 1.3826 0.055
+ HifiFace[36] 94.26 58.05 6.50 0.0382 1.3491 0.057
+ FaceShifter[19] 87.99 54.49 6.32 0.0342 1.4072 0.072
+ InfoSwap[12] 99.26 67.88 7.25 0.0371 1.4191 0.062
+ BlendFace[30] 89.91 54.44 6.15 0.0286 1.5293 0.056
+ DiffSwap[47] 19.16 28.56 4.94 0.0237 2.0862 0.067
+ Face-Adapter[14] 96.47 53.90 6.66 0.0319 1.5354 0.061
+ Ours 99.10 70.45 4.99 0.0334 1.2243 0.053
+ Table2.QuantitativeresultsinVFHQ-FS.
+ Methods IDs.↑ Exp↓ Pose↓ Shape↓ VIDD↓ FVD↓
+ SimSwap[5] 58.32 6.60 0.0499 1.2674 0.5541 93.59
+ HifiFace[36] 61.57 6.62 0.0497 1.2077 0.5599 101.67
+ InfoSwap[12] 59.80 7.57 0.0606 1.5067 0.7307 100.50
+ Face-Adapter[14] 54.82 6.82 0.0466 1.6172 0.7355 211.66
+ Ours 63.69 5.09 0.0396 1.2066 0.5041 81.12
+ thatHiFiVFSoutperformspreviousmethodsinmostmet
+rics,effectivelygeneratingswappedfaceswithimprovedat
+tributeandidentitycontrol.Weachievedsecond-placepose
+ resultsontheFF++butreachedSOTAperformanceonthe
+ VFHQ-FS,whereextremeposesarepresent.Thesmallde
+viationsinFF++arelikelyduetobiasesfromtheposeesti
+mationmodel.Additionally,VFHQ-FSexcelsintemporal
+ stabilitymetrics(VIDDandFVD),outperformingallmeth
+ods,particularlythediffusion-basedFace-Adapter[14].
+ QualitativeComparisons. ForVFHQ-FS, comparison
+ withthepreviousworkisshowninFig.4.Thefirstexam
+pleshowcasestheperformanceofourmethodinhandling
+ complexocclusionsand lightingconditions. Incontrast,
+ thecomparisonmethodsexhibitsignificantartifacts,partic
+ularlyinline1,wheremostmethodsfailtoaccuratelyren
+derthemouthocclusions. Thesecondexamplefocuseson
+ extremeposescenarios,revealingthattheresultsfromSim
+Swap[5]andInfoSwap[12]appearunnatural inthiscon
+text.Thethirdexampleemphasizesmakeupdetails,suchas
+ thereddotontheforehead,whichthecomparisonmethods
+ struggletopreserve,whileourmethodeffectivelymaintains
+ thisdetail.Regardingvideostability,asitischallengingto
+ assessfromstill images,westronglyencouragereadersto
+ refer totheSupplementaryMaterials toviewtheorigi
+nalvideos. Thevideoresultsclearlydemonstratethatour
+ methodsignificantlyoutperformsothers in termsofboth
+ videostabilityandgenerationquality.Wealsoperformthe
+ qualitativeevaluationontheFF++datasetinFig.5,andthe
+ completecomparisonwithmoremethodsisshowninsup
+plementarymaterials. TheresultsofourHiFiVFSdemon
+stratestrongidentityperformancewhileeffectivelypreserv
+ingattributessuchasexpression,posture,andlighting.
+ HumanEvaluation. Fouruserstudieswereconductedto
+ 6
+Figure 4. VFHQ-FS results compared with other methods. The source image of each example is placed in the corresponding top-left
+ position, and the target videos are in the first row. The complete video comparisons are included in the Supplementary Materials.
+ Figure 5. FF++ results compared with FaceShifter [19], Blend
+Face [30] and Face-Adapter [14].
+ evaluate the performance of the proposed model. Partici
+pants were asked to rate the results on a score from 1 (the
+ worst) to 5 (the best): 1) identity similarity with the source
+ face; 2) preservation of target video attributes, including
+ pose, expression, gaze, lighting, and makeup; 3) stability
+ Table 3. User study results of average scores for each method.
+ Methods
+ ID↑ Attr↑ Stability↑ Quality↑
+ SimSwap [5]
+ HifiFace [36]
+ InfoSwap [12]
+ 3.35
+ 3.92
+ 3.32
+ 3.57
+ 3.55
+ 3.07
+ 3.38
+ 3.52
+ 3.08
+ 3.28
+ 3.47
+ 3.03
+ Face-Adapter [14] 3.82 2.68
+ Ours
+ 4.27
+ 4.38
+ 1.57
+ 4.58
+ 2.17
+ 4.53
+ of the resulting videos; and 4) generation quality of the out
+puts. In each unit, participants were presented with two real
+ inputs: the source image and the target videos, along with
+ four reshuffled face swapping results generated by Sim
+Swap [5], HifiFace [36], InfoSwap [12], Face-Adapter [14],
+ and our HiFiVFS. Each user was presented with 20 ran
+domly selected pairs from the VFHQ-FS and in-the-wild
+ test sets. Finally, we collected answers from 15 human
+ evaluators. The average scores for each method across the
+ studies are shown in Tab. 3, indicating that our model sig
+nificantly outperforms the other three methods. Parts of the
+ used videos are in the supplementary materials.
+ 7
+Figure 6. Face swapping results on wild face videos under various challenging conditions. Our method is capable of producing results with
+ high identity similarity, excellent preservation of detailed attributes, and temporal stability.
+ 5.3. Ablation Study
+ Fine-grained Attribute Learning. To verify the effective
+ness of FAL, we compared it with three baseline models:
+ 1) w/o-latent, which trains FAL in pixel space instead of
+ latent space, 2) ID+, which uses traditional identity cosine
+ similarity loss instead of the triplet margin identity loss em
+ployed in FAL, and 3)w/o-adv, which does not train with a
+ discriminator. As shown in Tab. 4, The w/o-latent model has
+ a decline in all metrics. This may highlight the gap between
+ image space and latent space. Since the denoising-UNet
+ operates in the latent space, the FAL may require signifi
+cantly more training to achieve comparable results to ours
+ when training in image space. Both ID+ and w/o-adv have
+ demonstrated a decrease in attribute-related metrics, indi
+cating that triplet margin identity loss and adversarial learn
+ing are beneficial for fine-grained attribute learning.
+ Detailed Identity Learning. To evaluate the effectiveness
+ of DIL, we train models with fgid instead of fdid, which
+ is named w/o-fdid. As shown in Tab. 4, w/o-fdid achieves
+ similar performance in attribute metrics; however, it per
+forms less effectively in terms of identity similarity and face
+ shape. The results prove that the using of fdid is beneficial
+ to the face swapping task.
+ Table 4. Ablation Study of FAL and DIL on FF++. Bold text
+ represents the best and underlined text represents the second result.
+ Methods
+ IDs.↑
+ Exp↓ Pose↓ Shape↓ Gaze↓
+ w/o-latent
+ ID+
+ w/o-adv
+ w/o-fdid
+ Ours
+ 69.95
+ 72.02
+ 70.37
+ 68.37
+ 70.45
+ 5.50
+ 5.46
+ 5.22
+ 5.04
+ 4.99
+ 0.0392
+ 0.0365
+ 0.0356
+ 0.0335
+ 0.0334
+ 1.2587
+ 1.2217
+ 1.2293
+ 1.2548
+ 1.2243
+ 0.062
+ 0.055
+ 0.056
+ 0.051
+ 0.053
+ 6. Conclusion
+ In this work, we introduce a high fidelity video face swap
+ping method called HiFiVFS, which can generate high fi
+delity face swapping videos even in extremely challenging
+ scenarios. HiFiVFS leverages the generative and temporal
+ priors of SVD to build the first true video face swapping
+ framework. FAL achieves attribute disentanglement and
+ enhancement through identity desensitization and adversar
+ial learning, thereby improving control over fine-grained at
+tributes. DIL extracts detailed identity features for the face
+ swapping task, thereby improving the identity similarity.
+ Extensive experiments demonstrate that HiFiVFS signifi
+cantly outperforms previous face swapping methods.
+ 8
+References
+ [1] Oleg Alexander, Mike Rogers, William Lambeth, Matt Chi
+ang, and Paul Debevec. Creating a photoreal digital actor:
+ The digital emily project. In 2009 Conference for Visual Me
+dia Production. IEEE, 2009. 1
+ [2] Volker Blanz and Thomas Vetter. A morphable model for
+ the synthesis of 3d faces. In Proceedings of the 26th an
+nual conference on Computer graphics and interactive tech
+niques, 1999. 3
+ [3] Andreas Blattmann, Tim Dockhorn, Sumith Kulal, Daniel
+ Mendelevitch, Maciej Kilian, Dominik Lorenz, Yam Levi,
+ Zion English, Vikram Voleti, Adam Letts, et al. Stable video
+ diffusion: Scaling latent video diffusion models to large
+ datasets. arXiv preprint arXiv:2311.15127, 2023. 2, 3, 4
+ [4] AndreasBlattmann, RobinRombach, HuanLing, TimDock
+horn, Seung Wook Kim, Sanja Fidler, and Karsten Kreis.
+ Align your latents: High-resolution video synthesis with la
+tent diffusion models. In Proceedings of the IEEE/CVF Con
+ference on Computer Vision and Pattern Recognition, 2023.
+ 3
+ [5] Renwang Chen, Xuanhong Chen, Bingbing Ni, and Yanhao
+ Ge. Simswap: An efficient framework for high fidelity face
+ swapping. In Proceedings of the 28th ACM International
+ Conference on Multimedia, 2020. 1, 2, 3, 6, 7
+ [6] Ziyan Chen, Jingwen He, Xinqi Lin, Yu Qiao, and Chao
+ Dong. Towards real-world video face restoration: A new
+ benchmark. arXiv preprint arXiv:2404.19500, 2024. 6
+ [7] Yunjey Choi, Youngjung Uh, Jaejun Yoo, and Jung-Woo Ha.
+ Stargan v2: Diverse image synthesis for multiple domains.
+ In Proceedings of the IEEE Conference on Computer Vision
+ and Pattern Recognition, 2020. 5
+ [8] Joon Son Chung, Arsha Nagrani, and Andrew Zisserman.
+ Voxceleb2: Deep speaker recognition. arXiv preprint
+ arXiv:1806.05622, 2018. 5
+ [9] Jiankang Deng, Jia Guo, Evangelos Ververas, Irene Kot
+sia, and Stefanos Zafeiriou. Retinaface: Single-shot multi
+level face localisation in the wild. In Proceedings of
+ the IEEE/CVF conference on computer vision and pattern
+ recognition, 2020. 6
+ [10] Yu Deng, Jiaolong Yang, Sicheng Xu, Dong Chen, Yunde
+ Jia, and Xin Tong. Accurate 3d face reconstruction with
+ weakly-supervised learning: From single image to image set.
+ In Proceedings of the IEEE Conference on Computer Vision
+ and Pattern Recognition Workshops, 2019. 2, 3
+ [11] Prafulla Dhariwal and Alexander Nichol. Diffusion models
+ beat gans on image synthesis. Advances in neural informa
+tion processing systems, 2021. 3
+ [12] Gege Gao, Huaibo Huang, Chaoyou Fu, Zhaoyang Li, and
+ Ran He. Information bottleneck disentanglement for identity
+ swapping. In Proceedings of the IEEE/CVF conference on
+ computer vision and pattern recognition, 2021. 1, 2, 3, 6, 7
+ [13] Ian Goodfellow, Jean Pouget-Abadie, Mehdi Mirza, Bing
+ Xu, David Warde-Farley, Sherjil Ozair, Aaron Courville, and
+ Yoshua Bengio. Generative adversarial nets. In Advances in
+ neural information processing systems, 2014. 2
+ [14] Yue Han, Junwei Zhu, Keke He, Xu Chen, Yanhao Ge,
+ Wei Li, Xiangtai Li, Jiangning Zhang, Chengjie Wang, and
+ Yong Liu. Face adapter for pre-trained diffusion models
+ with fine-grained id and attribute control. arXiv preprint
+ arXiv:2405.12970, 2024. 1, 2, 3, 4, 6, 7
+ [15] Phillip Isola, Jun-Yan Zhu, Tinghui Zhou, and Alexei A
+ Efros. Image-to-image translation with conditional adver
+sarial networks. In Proceedings of the IEEE Conference on
+ Computer Vision and Pattern Recognition, 2017. 2
+ [16] Tero Karras, Miika Aittala, Timo Aila, and Samuli Laine.
+ Elucidating the design space of diffusion-based generative
+ models. Advances in neural information processing systems,
+ 2022. 3, 4
+ [17] Jiseob Kim, Jihoon Lee, and Byoung-Tak Zhang. Smooth
+swap: A simple enhancement for face-swapping with
+ smoothness. In Proceedings of the IEEE/CVF Conference
+ on Computer Vision and Pattern Recognition, 2022. 1
+ [18] Jia Li, Zhaoyang Li, Jie Cao, Xingguang Song, and Ran
+ He. Faceinpainter: High fidelity face adaptation to heteroge
+neous domains. In Proceedings of the IEEE/CVF conference
+ on computer vision and pattern recognition, 2021.
+ [19] Lingzhi Li, Jianmin Bao, Hao Yang, Dong Chen, and Fang
+ Wen. Faceshifter: Towards high fidelity and occlusion aware
+ face swapping. arXiv preprint arXiv:1912.13457, 2019. 1,
+ 2, 3, 6, 7
+ [20] RenshuaiLiu, BowenMa,WeiZhang,ZhipengHu,Changjie
+ Fan, Tangjie Lv, Yu Ding, and Xuan Cheng. Towards a si
+multaneous and granular identity-expression control in per
+sonalized face generation. In Proceedings of the IEEE/CVF
+ Conference on Computer Vision and Pattern Recognition,
+ 2024. 1, 3, 4
+ [21] Zhian Liu, Maomao Li, Yong Zhang, Cairong Wang, Qi
+ Zhang, Jue Wang, and Yongwei Nie. Fine-grained face
+ swapping via regional gan inversion. In Proceedings of
+ the IEEE/CVF conference on computer vision and pattern
+ recognition, 2023. 1
+ [22] Yuchen Luo, Junwei Zhu, Keke He, Wenqing Chu, Ying
+ Tai, Chengjie Wang, and Junchi Yan. Styleface: Towards
+ identity-disentangled face generation on megapixels. In Eu
+ropean Conference on Computer Vision. Springer, 2022. 2
+ [23] Yuval Nirkin, Yosi Keller, and Tal Hassner. Fsgan: Subject
+ agnostic face swapping and reenactment. In ICCV, 2019. 2
+ [24] Xu Peng, Junwei Zhu, Boyuan Jiang, Ying Tai, Donghao
+ Luo, Jiangning Zhang, Wei Lin, Taisong Jin, Chengjie Wang,
+ and Rongrong Ji. Portraitbooth: A versatile portrait model
+ for fast identity-preserved personalization. In Proceedings of
+ the IEEE/CVF Conference on Computer Vision and Pattern
+ Recognition, 2024. 3
+ [25] Alec Radford, Jong Wook Kim, Chris Hallacy, Aditya
+ Ramesh, Gabriel Goh, Sandhini Agarwal, Girish Sastry,
+ Amanda Askell, Pamela Mishkin, Jack Clark, et al. Learn
+ing transferable visual models from natural language super
+vision. In International conference on machine learning.
+ PMLR, 2021. 2
+ [26] Robin Rombach, Andreas Blattmann, Dominik Lorenz,
+ Patrick Esser, and Bj¨ orn Ommer. High-resolution image
+ synthesis with latent diffusion models. In Proceedings of
+ the IEEE/CVF conference on computer vision and pattern
+ recognition, 2022. 3, 4, 5
+ 9
+[27] Felix Rosberg, Eren Erdal Aksoy, Fernando Alonso
+Fernandez, and Cristofer Englund. Facedancer: Pose-and
+ occlusion-aware high fidelity face swapping. In Proceedings
+ of the IEEE/CVF winter conference on applications of com
+puter vision, 2023. 2
+ [28] Arun Ross and Asem Othman. Visual cryptography for bio
+metric privacy. IEEE transactions on information forensics
+ and security, 2010. 1
+ [29] Andreas Rossler, Davide Cozzolino, Luisa Verdoliva, Chris
+tian Riess, Justus Thies, and Matthias Nießner. Faceforen
+sics++: Learning to detect manipulated facial images. In
+ Proceedings of the IEEE International Conference on Com
+puter Vision, 2019. 2, 5
+ [30] Kaede Shiohara, Xingchao Yang, and Takafumi Take
+tomi. Blendface: Re-designing identity encoders for face
+swapping. In Proceedings of the IEEE/CVF International
+ Conference on Computer Vision, 2023. 1, 2, 3, 6, 7
+ [31] Changyong Shu, Hemao Wu, Hang Zhou, Jiaming Liu,
+ Zhibin Hong, Changxing Ding, Junyu Han, Jingtuo Liu, Er
+rui Ding, and Jingdong Wang. Few-shot head swapping in
+ the wild. In Proceedings of the IEEE/CVF Conference on
+ Computer Vision and Pattern Recognition, 2022. 1
+ [32] Ivan Skorokhodov, Sergey Tulyakov, and Mohamed Elho
+seiny. Stylegan-v: A continuous video generator with the
+ price, image quality and perks of stylegan2. In Proceedings
+ of the IEEE/CVF conference on computer vision and pattern
+ recognition, 2022. 6
+ [33] Justus Thies, Michael Zollhofer, Marc Stamminger, Chris
+tian Theobalt, and Matthias Nießner. Face2face: Real-time
+ face capture and reenactment of rgb videos. In Proceed
+ings of the IEEE Conference on Computer Vision and Pattern
+ Recognition, 2016. 3
+ [34] Hao Wang, Yitong Wang, Zheng Zhou, Xing Ji, Dihong
+ Gong, Jingchao Zhou, Zhifeng Li, and Wei Liu. Cosface:
+ Large margin cosine loss for deep face recognition. In Pro
+ceedings of the IEEE conference on computer vision and pat
+tern recognition, 2018. 6
+ [35] Qixun Wang, Xu Bai, Haofan Wang, Zekui Qin, Anthony
+ Chen, Huaxia Li, Xu Tang, and Yao Hu. Instantid: Zero-shot
+ identity-preserving generation in seconds. arXiv preprint
+ arXiv:2401.07519, 2024. 3
+ [36] Yuhan Wang, Xu Chen, Junwei Zhu, Wenqing Chu, Ying
+ Tai, Chengjie Wang, Jilin Li, Yongjian Wu, Feiyue Huang,
+ and Rongrong Ji. Hififace: 3d shape and semantic
+ prior guided high fidelity face swapping. arXiv preprint
+ arXiv:2106.09965, 2021. 1, 2, 3, 6, 7
+ [37] Guangxuan Xiao, Tianwei Yin, William T Freeman, Fr´edo
+ Durand, and Song Han. Fastcomposer: Tuning-free multi
+subject image generation with localized attention. Interna
+tional Journal of Computer Vision, 2024. 3
+ [38] Liangbin Xie, Xintao Wang, Honglun Zhang, Chao Dong,
+ and Ying Shan. Vfhq: A high-quality dataset and bench
+mark for video face super-resolution. In Proceedings of
+ the IEEE/CVF Conference on Computer Vision and Pattern
+ Recognition, 2022. 5, 6
+ [39] Chao Xu, Jiangning Zhang, Yue Han, Guanzhong Tian, Xi
+anfang Zeng, Ying Tai, Yabiao Wang, Chengjie Wang, and
+ Yong Liu. Designing one unified framework for high-fidelity
+ face reenactment and swapping. In European conference on
+ computer vision. Springer, 2022. 1
+ [40] Chao Xu, Jiangning Zhang, Miao Hua, Qian He, Zili Yi, and
+ Yong Liu. Region-aware face swapping. In Proceedings of
+ the IEEE/CVF Conference on Computer Vision and Pattern
+ Recognition (CVPR), pages 7632–7641, 2022.
+ [41] Yangyang Xu, Bailin Deng, Junle Wang, Yanqing Jing, Jia
+ Pan, and Shengfeng He. High-resolution face swapping
+ via latent semantics disentanglement. In Proceedings of
+ the IEEE/CVF conference on computer vision and pattern
+ recognition, 2022.
+ [42] Zhiliang Xu, Zhibin Hong, Changxing Ding, Zhen Zhu,
+ Junyu Han, Jingtuo Liu, and Errui Ding. Mobilefaceswap:
+ A lightweight framework for video face swapping. In Pro
+ceedings of the AAAI Conference on Artificial Intelligence,
+ 2022. 1
+ [43] Zhiliang Xu, Hang Zhou, Zhibin Hong, Ziwei Liu, Jiaming
+ Liu, Zhizhi Guo, Junyu Han, Jingtuo Liu, Errui Ding, and
+ Jingdong Wang. Styleswap: Style-based generator empow
+ers robust face swapping. In European Conference on Com
+puter Vision. Springer, 2022. 2
+ [44] Hu Ye, Jun Zhang, Sibo Liu, Xiao Han, and Wei Yang. Ip
+adapter: Text compatible image prompt adapter for text-to
+image diffusion models. arXiv preprint arXiv:2308.06721,
+ 2023. 3
+ [45] Changqian Yu, Jingbo Wang, Chao Peng, Changxin Gao,
+ Gang Yu, and Nong Sang. Bisenet: Bilateral segmentation
+ network for real-time semantic segmentation. In Proceed
+ings of the European conference on computer vision (ECCV),
+ 2018. 6
+ [46] Jianhui Yu, Hao Zhu, Liming Jiang, Chen Change Loy, Wei
+dong Cai, and Wayne Wu. Celebv-text: A large-scale facial
+ text-video dataset. In Proceedings of the IEEE/CVF Con
+ference on Computer Vision and Pattern Recognition, 2023.
+ 5
+ [47] Wenliang Zhao, Yongming Rao, Weikang Shi, Zuyan Liu,
+ Jie Zhou, and Jiwen Lu. Diffswap: High-fidelity and con
+trollable face swapping via 3d-aware masked diffusion. In
+ Proceedings of the IEEE/CVF Conference on Computer Vi
+sion and Pattern Recognition, 2023. 1, 2, 3, 4, 6
+ [48] YuhaoZhu, QiLi, Jian Wang, Cheng-Zhong Xu, and Zhenan
+ Sun. One shot face swapping on megapixels. In Proceedings
+ of the IEEE/CVF conference on computer vision and pattern
+ recognition, 2021. 2
+ 10
+HiFiVFS: High Fidelity Video Face Swapping
+ Supplementary Material
+ 7. Network Structures of FAL
+ The detailed structure of our HiFiVFS is shown in Fig. 7.
+ The encoder Eattr consists of three layers, each contain
+ing two residual blocks and two self-attention mechanisms.
+ The output fattr is obtained from the last layer of Eattr,
+ while flow represents low-level features that are combined
+ with the denoising-UNet to preserve all relevant attribute
+ features as much as possible. The decoder also has three
+ layers, with the first two layers employing cross-attention
+ to merge frid. The discriminator shares the same structure
+ as Eattr but includes an additional convolution layer at the
+ end to adjust the output channels to 2.
+ 𝑽𝒕
+ Conv1×1
+ 8. More Results
+ For FF++, we put more comparations in Fig. 8 and 9.
+ For VFHQ-FS and wild cases, we have included additional
+ comparative results in the zip file (Comparisons VHFQ-FS
+ and Comparisons Wild). Besides the academic methods
+ mentioned in the main text, we also conducted a compar
+ison with the wildly-used open-source tool DeepFaceLive
+ in wild cases. HiFiVFS demonstrates superior performance
+ compared to other state-of-the-art face swapping methods
+ on wild face videos across a variety of scenarios.
+ Additionally, we have included several videos longer
+ than 64 frames in the Long Samples folder to illustrate that
+ HiFiVFS maintains consistent performance with extended
+ video lengths.
+ 9. Broader Impact and Limitations
+ Broader Impact. HiFiVFS is capable of consistently pro
+ducing high-quality face-swapping videos, even in highly
+ challenging situations, which expands the potential appli
+cations of face-swapping technology. However, the risk of
+ misuse poses serious concerns, such as privacy infringe
+ments, the dissemination of false information, and various
+ ethical dilemmas. To mitigate these risks, it is essential to
+ thoroughly assess the models, their intended uses, safety
+ implications, associated risks, and potential biases before
+ implementing them in real-world contexts. On a positive
+ note, HiFiVFS can also play a significant role in forgery
+ detection, enhancing our ability to recognize and combat
+ deepfakes.
+ 320×80×80
+ Res-Block
+ Self Attn
+ Res-Block
+ Self Attn
+ 𝑓𝑙𝑜𝑤
+ Res-Block
+ Self Attn
+ Res-Block
+ Self Attn
+ Res-Block
+ Self Attn
+ Res-Block
+ Self Attn
+ 𝑽𝒕 ′
+ 4×80×80
+ 4×80×80
+ Conv1×1
+ 320×80×80
+ Res-Block
+ Res-Block
+ 640×40×40
+ Cross Attn
+ Res-Block
+ 320×80×80
+ Cross Attn
+ Res-Block
+ 1280×20×20
+ Cross Attn
+ Res-Block
+ 640×40×40
+ Cross Attn
+ Res-Block
+ 𝑓𝑎𝑡𝑡𝑟
+ 𝑓𝑟𝑖𝑑
+ 1280×20×20
+ Figure 7. Detail Network Structures of FAL
+ Limitation. Video diffusion models are generally slow in
+ sampling and demand significant VRAM, and HiFiVFS is
+ no exception. To address this challenge, diffusion distil
+lation methods present a promising solution for achieving
+ faster synthesis.
+ 1
+Figure 8. More comparisons on FF++.
+ 2
+Figure 9. More comparisons on FF++.
+ 3

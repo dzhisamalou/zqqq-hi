@@ -1,8 +1,7 @@
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
-from .components import DownSampleBlock, TemporalSelfAttention
-
+from .components import DownSampleBlock
 
 class AttributeEncoder(nn.Module):
     """
@@ -42,7 +41,7 @@ class AttributeEncoder(nn.Module):
             
         Returns:
             fattr: 高级属性特征
-            flow: 低级特征列表
+            flow: 低级特征
         """
         # 检测输入是否包含时间维度
         has_time_dim = x.dim() == 5
@@ -84,7 +83,7 @@ class AttributeEncoder(nn.Module):
         # fattr是最后一层的输出，用于表示高层次属性特征
         fattr = feature3
         
-        # flow是前两层特征的集合，用于低层次特征表示
-        flow = [feature1, feature2]
+        # flow应该只包含第一层特征
+        flow = [feature1]
         
         return fattr, flow

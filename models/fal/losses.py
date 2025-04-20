@@ -62,9 +62,9 @@ class TripletIdentityLoss(nn.Module):
         计算三元组ID损失
         
         Args:
-            f_prime_gid: 重建视频的ID特征
+            f_prime_gid: 重建视频的ID特征 (fgid')
             fgid: 原始视频的ID特征
-            frid: 目标ID特征
+            frid: 随机ID特征
             is_same_id: 是否使用相同的ID特征
             
         Returns:

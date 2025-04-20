@@ -42,10 +42,26 @@ class FALModel(nn.Module):
         self.vae = None
     
     def set_vae(self, vae):
-        """设置VAE，用于潜在空间和像素空间的转换"""
-        self.vae = vae
+        """
+        设置VAE，用于潜在空间和像素空间的转换
+        
+        Args:
+            vae: 可以是VAE实例或预训练模型路径
+        """
+        if isinstance(vae, str):
+            # 如果传入字符串，则加载预训练模型
+            from .vae import VAE
+            self.vae = VAE.from_pretrained(vae)
+        else:
+            # 否则直接使用传入的VAE实例
+            self.vae = vae
+        
         # 同时设置解码器中的VAE解码器
         self.decoder.set_vae_decoder(self.vae)
+        
+        # 将VAE移至相同设备
+        if next(self.parameters()).is_cuda:
+            self.vae = self.vae.cuda()
         
     def generate_frame_mask(self, batch_size, num_frames, height, width, warmup=False, p=0.5):
         """

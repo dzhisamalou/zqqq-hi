@@ -65,8 +65,19 @@ class AttributeDecoder(nn.Module):
         self.vae_decoder = vae_decoder
         
     def set_vae_decoder(self, vae_decoder):
-        """设置VAE解码器"""
-        self.vae_decoder = vae_decoder
+        """
+        设置VAE解码器
+        
+        Args:
+            vae_decoder: 可以是VAEDecoder实例或完整的VAE实例
+        """
+        # 检查是否传入的是完整VAE或仅解码器
+        if hasattr(vae_decoder, 'decode'):
+            # 如果是完整VAE，只使用其decode方法
+            self.vae_decoder = vae_decoder
+        else:
+            # 如果只是解码器部分
+            self.vae_decoder = vae_decoder
     
     def forward(self, fattr, id_feature, detailed_id=None, return_pixel_space=False):
         """
@@ -108,7 +119,12 @@ class AttributeDecoder(nn.Module):
         if self.vae_decoder is not None:
             # 使用VAE解码器将潜在表示转换回像素空间
             with torch.no_grad():
-                pixel_output = self.vae_decoder(latent_output)  # [B, 3, 640, 640]
+                if hasattr(self.vae_decoder, 'decode'):
+                    # 如果是完整VAE，调用其decode方法
+                    pixel_output = self.vae_decoder.decode(latent_output)
+                else:
+                    # 如果只是解码器，直接调用
+                    pixel_output = self.vae_decoder(latent_output)
         
         if return_pixel_space:
             if pixel_output is None:

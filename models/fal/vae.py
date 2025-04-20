@@ -144,23 +144,54 @@ class VAE(nn.Module):
     """
     完整的VAE：包含编码器和解码器
     在HiFiVFS模型中，既需要将图像编码到潜在空间，也需要将潜在表示解码回RGB空间
+    支持使用自定义VAE实现或加载预训练的Stable Diffusion VAE
     """
-    def __init__(self, in_channels=3, out_channels=3, z_channels=4, base_channels=64):
+    def __init__(self, in_channels=3, out_channels=3, z_channels=4, base_channels=64, pretrained_model_path=None):
         super(VAE, self).__init__()
         
+        self.pretrained_vae = None
+        self.scale_factor = 0.18215  # 与SD模型使用的缩放因子相同
+        
+        if pretrained_model_path:
+            try:
+                from diffusers import AutoencoderKL
+                self.pretrained_vae = AutoencoderKL.from_pretrained(pretrained_model_path, subfolder="vae")
+                print(f"成功加载预训练VAE模型: {pretrained_model_path}")
+            except ImportError:
+                print("无法导入diffusers，将使用自定义VAE模型")
+                self._init_custom_vae(in_channels, out_channels, z_channels, base_channels)
+            except Exception as e:
+                print(f"加载预训练VAE模型失败: {e}，将使用自定义VAE模型")
+                self._init_custom_vae(in_channels, out_channels, z_channels, base_channels)
+        else:
+            self._init_custom_vae(in_channels, out_channels, z_channels, base_channels)
+    
+    def _init_custom_vae(self, in_channels, out_channels, z_channels, base_channels):
+        """初始化自定义VAE组件"""
         self.encoder = VAEEncoder(in_channels, z_channels, base_channels)
         self.decoder = VAEDecoder(z_channels, out_channels, base_channels)
-        self.scale_factor = 0.18215  # 添加与LDM一致的缩放因子
     
     def encode(self, x):
         """编码图像到潜在空间"""
-        return self.encoder(x)
+        if self.pretrained_vae:
+            with torch.no_grad():
+                # 预训练VAE编码输出latent_dist，需要采样
+                latent = self.pretrained_vae.encode(x).latent_dist.sample()
+                return latent
+        else:
+            return self.encoder(x)
     
     def decode(self, z):
         """解码潜在表示到图像空间"""
-        # 首先除以缩放因子
-        z = z / self.scale_factor
-        return self.decoder(z)
+        if self.pretrained_vae:
+            with torch.no_grad():
+                # 不需要额外除以scale_factor，因为预训练模型内部已处理
+                decoded = self.pretrained_vae.decode(z).sample
+                return decoded
+        else:
+            # 自定义实现需要先除以缩放因子
+            z = z / self.scale_factor
+            return self.decoder(z)
     
     def forward(self, x, decode=False):
         """前向传播"""
@@ -168,3 +199,8 @@ class VAE(nn.Module):
         if decode:
             return self.decode(z)
         return z
+    
+    @classmethod
+    def from_pretrained(cls, model_path):
+        """从预训练模型创建VAE"""
+        return cls(pretrained_model_path=model_path)

@@ -1,142 +1,114 @@
 import torch
-import torch.nn as nn
 import torch.nn.functional as F
 import os
-import gdown
 from pathlib import Path
+import warnings
+import numpy as np
 
-class CosFaceBlock(nn.Module):
-    """CosFace模型的基本构建块"""
-    def __init__(self, in_channel, depth, stride):
-        super(CosFaceBlock, self).__init__()
-        if stride == 1:
-            self.shortcut = nn.Sequential()
-        else:
-            self.shortcut = nn.Sequential(
-                nn.Conv2d(in_channel, depth, (1, 1), stride, bias=False),
-                nn.BatchNorm2d(depth)
-            )
-        self.residual = nn.Sequential(
-            nn.Conv2d(in_channel, depth, (3, 3), stride, 1, bias=False),
-            nn.BatchNorm2d(depth),
-            nn.PReLU(depth),
-            nn.Conv2d(depth, depth, (3, 3), 1, 1, bias=False),
-            nn.BatchNorm2d(depth)
-        )
-
-    def forward(self, x):
-        return self.residual(x) + self.shortcut(x)
+# 导入insightface库
+try:
+    import insightface
+    from insightface.app import FaceAnalysis
+    from insightface.model_zoo import get_model
+    INSIGHTFACE_AVAILABLE = True
+except ImportError:
+    warnings.warn("insightface未安装，请使用pip install insightface安装")
+    INSIGHTFACE_AVAILABLE = False
 
 
-class CosFaceNet(nn.Module):
-    """CosFace网络实现"""
-    def __init__(self, block_class=CosFaceBlock, num_layers=[2, 2, 2, 2], feature_dim=512, embedding_size=512):
-        super(CosFaceNet, self).__init__()
-        # 输入层
-        self.conv1 = nn.Sequential(
-            nn.Conv2d(3, 64, 3, 1, 1, bias=False),
-            nn.BatchNorm2d(64),
-            nn.PReLU(64)
-        )
-        
-        # Residual块
-        self.layer1 = self._make_layer(block_class, 64, 64, num_layers[0], 1)
-        self.layer2 = self._make_layer(block_class, 64, 128, num_layers[1], 2)
-        self.layer3 = self._make_layer(block_class, 128, 256, num_layers[2], 2)
-        self.layer4 = self._make_layer(block_class, 256, 512, num_layers[3], 2)
-        
-        # 全连接层
-        self.fc5 = nn.Sequential(
-            nn.Conv2d(512 * 7 * 7, feature_dim, kernel_size=1, stride=1, padding=0, bias=False),
-            nn.BatchNorm2d(feature_dim),
-        )
-        
-        # 输出特征
-        self.fc6 = nn.Linear(feature_dim, embedding_size, bias=False)
-        
-        # 初始化权重
-        for m in self.modules():
-            if isinstance(m, nn.Conv2d):
-                nn.init.kaiming_normal_(m.weight, mode='fan_out', nonlinearity='relu')
-            elif isinstance(m, nn.BatchNorm2d):
-                nn.init.constant_(m.weight, 1)
-                nn.init.constant_(m.bias, 0)
-
-    def _make_layer(self, block, in_channel, depth, num_blocks, stride):
-        layers = []
-        layers.append(block(in_channel, depth, stride))
-        for i in range(num_blocks - 1):
-            layers.append(block(depth, depth, 1))
-        return nn.Sequential(*layers)
-
-    def forward(self, x, return_detailed_features=False):
-        # 输入层
-        x = self.conv1(x)
-        
-        # Residual块
-        x = self.layer1(x)
-        x = self.layer2(x)
-        x = self.layer3(x)
-        x = self.layer4(x)
-        
-        # 提取详细特征 (detailed features) - 对应fdid
-        detailed_features = x  # [B, 512, 7, 7]
-        
-        # 全局池化
-        x = F.adaptive_avg_pool2d(x, (1, 1))
-        x = x.view(x.size(0), -1)
-        
-        # FC层
-        features = self.fc5(x.unsqueeze(-1).unsqueeze(-1)).squeeze(-1).squeeze(-1)  # [B, 512]
-        
-        # 归一化特征
-        normalized_features = F.normalize(features, p=2, dim=1)
-        
-        if return_detailed_features:
-            return normalized_features, detailed_features
-        else:
-            return normalized_features
-
-
-class IDExtractor(nn.Module):
-    """ID特征提取器，封装CosFace模型"""
+class IDExtractor(torch.nn.Module):
+    """ID特征提取器，使用InsightFace库中的CosFace模型"""
     def __init__(self, model_path=None, device=None):
         super(IDExtractor, self).__init__()
         self.device = device or ('cuda' if torch.cuda.is_available() else 'cpu')
         
-        # 创建CosFace模型
-        self.model = CosFaceNet()
-        self.model.to(self.device)
+        # 面部图像大小配置
+        self.face_size = (112, 112)  # InsightFace模型默认输入大小
         
-        # 加载预训练权重
-        if model_path is None:
-            # 使用用户主目录下的默认路径
-            home = str(Path.home())
-            weights_dir = os.path.join(home, ".deepface", "weights", "cosface")
-            model_path = os.path.join(weights_dir, "cosface_pretrained.pth")
+        if not INSIGHTFACE_AVAILABLE:
+            raise ImportError("请先安装insightface: pip install insightface")
+        
+        # 初始化模型配置 - 直接使用InsightFace自带的CosFace模型
+        try:
+            # 创建FaceAnalysis应用
+            self.app = FaceAnalysis(allowed_modules=['recognition'], providers=['CUDAExecutionProvider', 'CPUExecutionProvider'])
+            self.app.prepare(ctx_id=0 if self.device == 'cuda' else -1)
             
-            if not os.path.exists(model_path):
-                os.makedirs(weights_dir, exist_ok=True)
-                # 从公共仓库下载预训练权重 (这里使用了示例URL，实际中需替换为真实的URL)
-                url = "https://github.com/username/cosface-model/raw/master/cosface_pretrained.pth"
-                try:
-                    gdown.download(url, model_path, quiet=True)
-                except Exception as e:
-                    print(f"无法下载预训练权重: {e}")
+            # 获取CosFace模型 - "CosFace: Large Margin Cosine Loss for Deep Face Recognition"论文实现
+            self.model = get_model("cosface_r100")
+            print("成功加载InsightFace CosFace模型 (Large Margin Cosine Loss)")
+        except Exception as e:
+            print(f"加载CosFace模型失败: {e}")
+            raise
         
-        # 加载权重文件
-        if os.path.exists(model_path):
-            try:
-                state_dict = torch.load(model_path, map_location=self.device)
-                self.model.load_state_dict(state_dict)
-                print(f"成功加载CosFace预训练权重: {model_path}")
-            except Exception as e:
-                print(f"加载CosFace预训练权重失败: {e}")
+        # 确保模型在正确的设备上
+        if self.device == 'cuda':
+            self.model.to('cuda')
+            
+        # 初始化钩子相关属性
+        self.hook_handles = []
+        self.intermediate_features = {}
+        # 只设置最后一个Res-Block的输出作为目标
+        self.target_layer_name = 'layer4'
+        self._register_hooks()
+    
+    def _register_hooks(self):
+        """
+        为模型注册钩子，捕获最后一个Res-Block输出
+        """
+        # 首先移除所有现有钩子
+        self._remove_hooks()
+        
+        # 定义钩子函数
+        def hook_fn(module, input, output):
+            self.intermediate_features[self.target_layer_name] = output
+        
+        # 为CosFace模型的最后一个残差块注册钩子
+        if hasattr(self.model, 'layer4'):
+            handle = self.model.layer4.register_forward_hook(hook_fn)
+            self.hook_handles.append(handle)
+            print(f"已为CosFace模型的最后残差块 'layer4' 注册钩子")
+        elif hasattr(self.model, 'backbone') and hasattr(self.model.backbone, 'layer4'):
+            handle = self.model.backbone.layer4.register_forward_hook(hook_fn)
+            self.hook_handles.append(handle)
+            print(f"已为CosFace模型的backbone中的 'layer4' 注册钩子")
         else:
-            print(f"找不到CosFace预训练权重: {model_path}")
+            raise AttributeError("CosFace模型中没有找到'layer4'层，无法获取中间层特征")
+    
+    def _remove_hooks(self):
+        """移除所有已注册的钩子"""
+        for handle in self.hook_handles:
+            handle.remove()
+        self.hook_handles = []
+        self.intermediate_features = {}
+    
+    def _preprocess_images(self, images):
+        """预处理面部图像，调整为模型要求的尺寸并格式化"""
+        # 转换为CPU，然后转为numpy
+        if images.device.type != 'cpu':
+            images = images.cpu()
         
-        # 设置为评估模式
-        self.model.eval()
+        # 转换为numpy数组
+        images_np = images.permute(0, 2, 3, 1).numpy()
+        
+        # 确保值范围在[0, 255]
+        if images_np.max() <= 1.0:
+            images_np = images_np * 255.0
+        
+        # 转换为uint8类型
+        images_np = images_np.astype(np.uint8)
+        
+        # 调整大小
+        batch_size = images_np.shape[0]
+        processed_images = []
+        
+        for i in range(batch_size):
+            # 使用OpenCV调整大小
+            import cv2
+            img = cv2.resize(images_np[i], self.face_size)
+            processed_images.append(img)
+        
+        return processed_images
     
     def extract_features(self, face_images, return_detailed=False):
         """
@@ -148,15 +120,52 @@ class IDExtractor(nn.Module):
             
         Returns:
             如果return_detailed为False: 全局ID特征 [B, 512]
-            如果return_detailed为True: (全局ID特征 [B, 512], 详细ID特征 [B, 512, 7, 7])
+            如果return_detailed为True: (全局ID特征 [B, 512], 详细ID特征 [B, C, H, W])
         """
+        # 预处理图像
+        processed_images = self._preprocess_images(face_images)
+        batch_size = len(processed_images)
+        
+        # 提取特征
+        features = []
         with torch.no_grad():
+            # 清空之前的中间特征
+            self.intermediate_features = {}
+            
+            # 获取全局特征
+            for img in processed_images:
+                # 使用模型提取特征
+                feat = self.model.get_feat(img)
+                features.append(feat)
+            
+            # 转换为torch张量
+            features = torch.from_numpy(np.stack(features)).to(self.device)
+            
+            # 如果需要返回详细特征
             if return_detailed:
-                global_features, detailed_features = self.model(face_images, return_detailed_features=True)
-                return global_features, detailed_features
+                # 尝试获取中间层特征
+                if self.target_layer_name in self.intermediate_features:
+                    # 成功获取到中间层特征
+                    detailed_features = self.intermediate_features[self.target_layer_name]
+                    
+                    # 确保详细特征是正确的形状和批次数量
+                    if isinstance(detailed_features, list) and len(detailed_features) == batch_size:
+                        detailed_features = torch.stack(detailed_features, dim=0)
+                    
+                    # 如果详细特征的批次维度不匹配，直接报错
+                    if detailed_features.shape[0] != batch_size:
+                        raise ValueError(f"详细特征批次大小不匹配 ({detailed_features.shape[0]} vs {batch_size})")
+                    
+                    # 如果详细特征是张量但需要转移到正确的设备
+                    if detailed_features.device != self.device:
+                        detailed_features = detailed_features.to(self.device)
+                    
+                    return features, detailed_features
+                else:
+                    # 如果没有成功获取到中间层特征，直接报错
+                    raise RuntimeError(f"未能获取层 '{self.target_layer_name}' 的详细特征")
             else:
-                global_features = self.model(face_images)
-                return global_features
+                return features
     
     def forward(self, face_images, return_detailed=False):
         """
@@ -168,9 +177,13 @@ class IDExtractor(nn.Module):
             
         Returns:
             如果return_detailed为False: 全局ID特征 [B, 512]
-            如果return_detailed为True: (全局ID特征 [B, 512], 详细ID特征 [B, 512, 7, 7])
+            如果return_detailed为True: (全局ID特征 [B, 512], 详细ID特征)
         """
         return self.extract_features(face_images, return_detailed)
+    
+    def __del__(self):
+        """在对象销毁时移除所有钩子"""
+        self._remove_hooks()
 
 
 # 创建全局ID提取器实例
@@ -179,10 +192,12 @@ def get_id_extractor(model_path=None, device=None):
     获取ID特征提取器
     
     Args:
-        model_path: 预训练模型路径
+        model_path: 已废弃参数，保留仅为兼容性
         device: 运行设备
         
     Returns:
         IDExtractor实例
     """
-    return IDExtractor(model_path, device)
+    if model_path is not None:
+        print("警告: 自定义模型路径参数已被忽略，现在总是使用InsightFace自带的CosFace模型")
+    return IDExtractor(device=device)

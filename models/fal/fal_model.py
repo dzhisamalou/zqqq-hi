@@ -14,7 +14,7 @@ class FALModel(nn.Module):
     Fine-grained Attribute Learning (FAL) 模型
     整合编码器、解码器和判别器，实现属性学习和ID注入
     
-    支持处理带有时间维度的输入 [B, F, C, H, W]
+    支持处理带有时间维度的输入 [B, F, C, H, W]，其中B总是设置为1
     """
     def __init__(self, id_feature_dim=512, detailed_id_dim=2048, in_channels=4, base_channels=320, cosface_path=None):
         super(FALModel, self).__init__()
@@ -40,6 +40,10 @@ class FALModel(nn.Module):
         
         # VAE 用于潜在空间和像素空间的转换
         self.vae = None
+        
+        # 用于存储其他视频的ID特征的缓存池
+        self.id_feature_pool = []
+        self.max_pool_size = 50  # 缓存池最大容量
     
     def set_vae(self, vae):
         """
@@ -63,46 +67,98 @@ class FALModel(nn.Module):
         if next(self.parameters()).is_cuda:
             self.vae = self.vae.cuda()
         
-    def generate_frame_mask(self, batch_size, num_frames, height, width, warmup=False, p=0.5):
+    def generate_frame_mask(self, batch_size, num_frames, height, width, global_step, warmup=False, p=0.5):
         """
-        生成帧掩码
+        生成帧掩码，确保批次大小为1
         
         Args:
-            batch_size: 批次大小
+            batch_size: 批次大小（将被忽略，始终使用1）
             num_frames: 帧数
             height: 高度
             width: 宽度
-            warmup: 是否处于热身阶段
+            global_step: 当前训练步数
+            warmup: 是否处于旧的热身阶段（可能被global_step覆盖）
             p: 随机掩码的概率
             
         Returns:
             帧掩码：0表示不使用属性特征，1表示使用
         """
-        if warmup:
-            # 热身阶段：全0掩码（不使用属性特征）
-            return torch.zeros((batch_size, num_frames, height, width), dtype=torch.float32, device='cuda')
-        else:
-            # 主训练阶段：以概率p随机为每个批次生成0或1
-            mask = torch.zeros((batch_size, num_frames, height, width), dtype=torch.float32, device='cuda')
-            for i in range(batch_size):
-                if random.random() < p:
-                    mask[i, :, :, :] = 1.0
-            return mask
+        # 强制将批次大小设为1
+        batch_size = 1
         
-    def forward(self, target_video, source_id_feature=None, external_id_extractor=None, warmup=False):
+        # 训练初期（前5000步）固定为零掩码
+        if global_step < 5000:
+            return torch.zeros((batch_size, num_frames, height, width), dtype=torch.float32, device='cuda')
+        # elif warmup: # 根据 global_step < 5000 的逻辑，此处的 warmup 参数可能不再需要或有其他用途
+        #     # 热身阶段：全0掩码（不使用属性特征）
+        #     return torch.zeros((batch_size, num_frames, height, width), dtype=torch.float32, device='cuda')
+        else:
+            # 主训练阶段（5000步之后）：以概率p随机为每个批次生成0或1
+            mask = torch.zeros((batch_size, num_frames, height, width), dtype=torch.float32, device='cuda')
+            if random.random() < p:
+                mask[0, :, :, :] = 1.0
+            return mask
+    
+    def get_random_id_feature(self, original_id, original_detailed_id):
         """
-        前向传播
+        获取随机ID特征，有50%概率返回原始ID特征，50%概率返回其他视频的ID特征
         
         Args:
-            target_video: 目标视频 [B, F, C, H, W] - 已经是VAE编码后的潜在表示
+            original_id: 原始全局ID特征 [B, id_dim]
+            original_detailed_id: 原始详细ID特征 [B, detailed_id_dim, H, W]
+            
+        Returns:
+            id_feature_to_use: 要使用的ID特征
+            detailed_id_to_use: 要使用的详细ID特征
+            is_same_id: 是否使用相同的ID
+        """
+        # 随机决定是否使用相同的ID（训练技巧）
+        use_same_id = (random.random() < 0.5) if self.training else False
+        
+        if use_same_id or not self.id_feature_pool:
+            # 使用原始ID特征
+            return original_id, original_detailed_id, True
+        else:
+            # 从ID特征池中随机选择一个特征
+            random_idx = random.randint(0, len(self.id_feature_pool) - 1)
+            random_id, random_detailed_id = self.id_feature_pool[random_idx]
+            return random_id, random_detailed_id, False
+    
+    def update_id_feature_pool(self, id_feature, detailed_id_feature):
+        """
+        更新ID特征缓存池
+        
+        Args:
+            id_feature: 全局ID特征 [B, id_dim]
+            detailed_id_feature: 详细ID特征 [B, detailed_id_dim, H, W]
+        """
+        # 添加新的ID特征到池中
+        self.id_feature_pool.append((id_feature.detach(), detailed_id_feature.detach()))
+        
+        # 如果池的大小超过最大容量，移除最旧的特征
+        if len(self.id_feature_pool) > self.max_pool_size:
+            self.id_feature_pool.pop(0)
+        
+    def forward(self, target_video, source_id_feature=None, external_id_extractor=None, warmup=False, global_step=float('inf')):
+        """
+        前向传播，确保批次大小为1
+        
+        Args:
+            target_video: 目标视频 [B, F, C, H, W] - 已经是VAE编码后的潜在表示，强制B=1
             source_id_feature: 源ID特征 [B, id_dim] 或None（使用内部id_extractor）
             external_id_extractor: 外部ID特征提取器，用于提取生成视频的ID
-            warmup: 是否处于热身阶段
+            warmup: 是否处于旧的热身阶段（可能被global_step覆盖）
+            global_step: 当前训练步数，默认为无穷大（推理模式）
             
         Returns:
             结果字典，包含各种中间特征和损失
         """
-        batch_size, num_frames, channels, height, width = target_video.shape
+        # 确保输入的批次大小为1
+        if target_video.shape[0] != 1:
+            raise ValueError(f"批次大小必须为1，当前为: {target_video.shape[0]}")
+        
+        batch_size = 1  # 强制设置批次大小为1
+        num_frames, channels, height, width = target_video.shape[1:]
         
         # 确保VAE已经设置
         if self.vae is None:
@@ -129,30 +185,25 @@ class FALModel(nn.Module):
             
             # 提取全局ID特征 (fgid) 和详细ID特征 (fdid)
             original_id, original_detailed_id = id_extractor(first_rgb_frames, return_detailed=True)
+            
+            # 更新ID特征池
+            self.update_id_feature_pool(original_id, original_detailed_id)
         
-        # 如果没有提供source_id_feature，则从内部提取
+        # 如果没有提供source_id_feature，则从内部提取或随机选择
         if source_id_feature is None:
-            # 这里可以实现更多逻辑来获取源ID特征
-            source_id_feature = original_id
+            # 获取随机ID特征（可能是原始ID特征或其他视频的ID特征）
+            id_feature_to_use, detailed_id_to_use, use_same_id = self.get_random_id_feature(original_id, original_detailed_id)
+        else:
+            # 使用提供的source_id_feature
+            id_feature_to_use = source_id_feature
+            detailed_id_to_use = original_detailed_id  # 如果外部提供source_id_feature，通常没有对应的detailed_id_feature
+            use_same_id = False
         
         # 提取目标视频属性特征 - 直接传递整个视频 [B, F, C, H, W]
         fattr, flow = self.encoder(target_video)
         
-        # 随机决定是否使用相同的ID（训练技巧）
-        use_same_id = (random.random() < 0.5) if self.training else False
-        
-        # 选择ID特征
-        if use_same_id:
-            id_feature_to_use = original_id
-            detailed_id_to_use = original_detailed_id
-        else:
-            id_feature_to_use = source_id_feature
-            # 对于详细ID特征，可能需要根据实际情况调整
-            # 如果source_id_feature是从外部提供的，可能没有对应的详细ID特征
-            detailed_id_to_use = original_detailed_id  # 这里可能需要修改
-        
         # 使用解码器生成带有新ID的视频 - 处理每一帧
-        b_frames = batch_size * num_frames
+        b_frames = batch_size * num_frames  # 此处b_frames应该等于num_frames，因为batch_size=1
         reconstructed_frames = []
         reconstructed_rgb_frames = []
         
@@ -194,7 +245,7 @@ class FALModel(nn.Module):
             real_logits = None
         
         # 生成帧掩码（用于控制属性特征的注入）
-        frame_mask = self.generate_frame_mask(batch_size, num_frames, height, width, warmup)
+        frame_mask = self.generate_frame_mask(batch_size, num_frames, height, width, global_step, warmup)
         
         # 整理结果
         results = {

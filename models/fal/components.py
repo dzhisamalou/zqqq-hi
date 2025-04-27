@@ -155,25 +155,3 @@ class DownSampleBlock(nn.Module):
         x = self.res2(x)
         x = self.attn2(x)
         return x
-
-
-class UpSampleBlock(nn.Module):
-    """上采样块：交叉注意力 + 转置卷积上采样"""
-    def __init__(self, in_channels, out_channels, id_dim, use_cross_attn=True):
-        super(UpSampleBlock, self).__init__()
-        self.use_cross_attn = use_cross_attn
-        
-        if use_cross_attn:
-            self.cross_attn = CrossAttention(in_channels, id_dim)
-            
-        self.up_conv = nn.ConvTranspose2d(in_channels, out_channels, kernel_size=4, stride=2, padding=1)
-        self.norm = nn.BatchNorm2d(out_channels)
-    
-    def forward(self, x, id_feature=None):
-        if self.use_cross_attn and id_feature is not None:
-            x = self.cross_attn(x, id_feature)
-            
-        x = self.up_conv(x)
-        x = self.norm(x)
-        x = F.relu(x)
-        return x

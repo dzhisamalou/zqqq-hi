@@ -52,6 +52,7 @@ class ReconstructionLoss(nn.Module):
 class TripletIdentityLoss(nn.Module):
     """
     三元组身份损失：当ID不同时，确保重建视频的ID与目标ID更接近而非原始ID
+    实现论文中的eq (5)
     """
     def __init__(self, margin=0.4):
         super(TripletIdentityLoss, self).__init__()
@@ -64,7 +65,7 @@ class TripletIdentityLoss(nn.Module):
         Args:
             f_prime_gid: 重建视频的ID特征 (fgid')
             fgid: 原始视频的ID特征
-            frid: 随机ID特征
+            frid: 目标ID特征
             is_same_id: 是否使用相同的ID特征
             
         Returns:
@@ -80,7 +81,7 @@ class TripletIdentityLoss(nn.Module):
             pos_cos = torch.sum(f_prime_gid * frid, dim=1)
             neg_cos = torch.sum(f_prime_gid * fgid, dim=1)
             
-            # 计算三元组损失
+            # 计算三元组损失 (根据eq (5))
             loss = torch.clamp(neg_cos - pos_cos + self.margin, min=0.0)
             return loss.mean()
         else:
@@ -90,6 +91,7 @@ class TripletIdentityLoss(nn.Module):
 class IdentityLoss(nn.Module):
     """
     身份损失：确保重建视频的ID与目标ID相似
+    实现论文中的eq (7)
     """
     def __init__(self):
         super(IdentityLoss, self).__init__()
@@ -155,6 +157,7 @@ class AdvLoss(nn.Module):
 class FALLoss(nn.Module):
     """
     FAL模块的完整损失函数
+    实现论文中的eq (6)
     """
     def __init__(self, lambda_attr=10.0, lambda_tid=1.0, lambda_rec=10.0):
         super(FALLoss, self).__init__()
@@ -200,7 +203,7 @@ class FALLoss(nn.Module):
             # 生成器损失
             l_adv = self.adv_loss.generator_loss(fake_logits)
         
-        # 计算总损失
+        # 计算总损失 (eq (6))
         total_loss = l_adv + self.lambda_attr * l_attr + self.lambda_tid * l_tid + self.lambda_rec * l_rec
         
         # 返回总损失和各部分损失
